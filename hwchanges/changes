@@ -1,0 +1,39 @@
+L18 56nH
+C45 22pF
+C47 22pF
+L15 150nH
+C42 6.2pF
+L25 56nH
+C59 22pF
+C64 22pF
+L17 120nH
+C44 18pF
+L8 150nH + 12pF
+L9 150nH + 12pF
+C27 8.2pF
+C28 8.2pF
+L11 150nH
+L12 150nH
+L13 75nH
+L14 75nH
+C37 15pF
+C32 15pF
+L7 22nH
+L21 82nH
+L22 82nH
+L23 82nH
+C53 22pF
+C61 22pF
+C55 47pF
+C58 47pF
+C63 1nF
+
+See pachanges.jpg
+Remove:
+C62,C60,C57
+
+Cut trace under new inductor (15nH)
+
+Add:
+near of inductor 47pF
+far of inductor 10pF
