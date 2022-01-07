@@ -51,8 +51,13 @@
 #define SPI_SS_PORT sfr_PORTD
 #define SPI_SS_PIN PIN4
 
+#if 0
 #define F_CLK 26000000UL
 #define XTALDIV 2
+#else
+#define F_CLK 10000000UL
+#define XTALDIV 1
+#endif
 
 #define DUMP_REGS
 //#define DUMP_REGS_READ
