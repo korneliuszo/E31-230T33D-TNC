@@ -52,6 +52,7 @@
 #define SPI_SS_PIN PIN4
 
 #define F_CLK 26000000UL
+#define XTALDIV 2
 
 #define DUMP_REGS
 //#define DUMP_REGS_READ

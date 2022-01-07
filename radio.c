@@ -350,24 +350,24 @@ void radio_setup_modulation(void)
 		if_frequency = 3180;
 	uint16_t iffreq =
 			((uint64_t)if_frequency
-					* (1UL << 20) * 2 /* xtaldiv */
+					* (1UL << 20) * XTALDIV
 					+ F_CLK/2) /* roundup*/
 					/ F_CLK;
-	uint32_t decdiv = (16 * 2 /* xtaldiv */ * 4 /* flt */ * f_baseband);
+	uint32_t decdiv = (16 * XTALDIV * 4 /* flt */ * f_baseband);
 	decimation = (F_CLK + decdiv/2)/decdiv;
 	if(decimation > 127)
 		decimation = 127;
-	uint32_t rx_datadiv = 2 /* xtaldiv */ * bitrate * decimation;
+	uint32_t rx_datadiv = XTALDIV * bitrate * decimation;
 	uint32_t rx_data_rate = (F_CLK * 128 + rx_datadiv/2) / rx_datadiv;
 	uint32_t max_rf_offset = ((uint64_t)f_baseband * (1UL << 24) + F_CLK/2)/F_CLK;
 	//uint32_t fskd = (uint32_t)(260 * m) & (~(uint32_t)1);
 	uint32_t fskd = ((uint32_t)3 * 512 * deviation)/bitrate;
 
-	uint32_t bw = F_CLK / (32 * bitrate * 2 /* xtaldiv */ * decimation);
+	uint32_t bw = F_CLK / (32 * bitrate * XTALDIV * decimation);
 
 	afskshift = (uint8_t)(2*log2i(bw));
 
-	float ratio = (64.0 * PI * 2 /* xtaldiv */ * bitrate/10) /
+	float ratio = (64.0 * PI * XTALDIV * bitrate/10) /
 			(float)F_CLK;
 
 	uint8_t agc_bw_product = (uint8_t)(-logf(1 - sqrtf(1 - ratio))* M_LOG2E);
@@ -401,7 +401,7 @@ void radio_setup_modulation(void)
 	uint8_t baseband_rg_phase_det = 0xF; /* disable loop */
 	uint8_t baseband_rg_freq_det = 0x1F; /* disable loop */
 
-	uint8_t rffreq_rg = logf((float)F_CLK / (2 /* xtaldiv */ * 4 * bitrate))
+	uint8_t rffreq_rg = logf((float)F_CLK / (XTALDIV * 4 * bitrate))
 																		*M_LOG2E + 0.5;
 	uint8_t rffreq_rg_during = rffreq_rg + 4;
 	if (rffreq_rg > 0xD) { rffreq_rg = 0xD; }
@@ -656,8 +656,8 @@ void radio_rx_on(void)
 	radio_write_u8(AX_REG_PWRMODE, AX_PWRMODE_FULLRX | 0x60);
 
 	//AFSK
-	uint16_t afskmark = ((uint64_t)1200 * (1UL << 16) * decimation * 2 /*xtaldiv*/ + F_CLK/2)/F_CLK;
-	uint16_t afskspace = ((uint64_t)2200 * (1UL << 16) * decimation * 2 /*xtaldiv*/ + F_CLK/2)/F_CLK;
+	uint16_t afskmark = ((uint64_t)1200 * (1UL << 16) * decimation * XTALDIV + F_CLK/2)/F_CLK;
+	uint16_t afskspace = ((uint64_t)2200 * (1UL << 16) * decimation * XTALDIV + F_CLK/2)/F_CLK;
 	radio_write_u16(AX_REG_AFSKMARK, afskmark);
 	radio_write_u16(AX_REG_AFSKSPACE, afskspace);
 
@@ -801,8 +801,10 @@ void radio_start(void)
 	radio_write_u8(AX_REG_XTALCAP, 0x00);
 	radio_write_u8(AX_REG_XTALOSC, 0x04);
 	radio_write_u8(AX_REG_XTALAMPL, 0x00);
-	radio_write_u8(0xF35, 0x11);
-
+	if(XTALDIV == 2)
+		radio_write_u8(0xF35, 0x11);
+	else
+		radio_write_u8(0xF35, 0x10);
 	//radio_write_u8(AX_REG_PINFUNCSYSCLK,0x04);
 
 	radio_set_freq(144800000);
