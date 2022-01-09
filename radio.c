@@ -358,12 +358,12 @@ void radio_setup_modulation(void)
 	if(decimation > 127)
 		decimation = 127;
 	uint32_t rx_datadiv = XTALDIV * bitrate * decimation;
-	uint32_t rx_data_rate = (F_CLK * 128 + rx_datadiv/2) / rx_datadiv;
+	uint32_t rx_data_rate = ((uint64_t)F_CLK * 128 + rx_datadiv/2) / rx_datadiv;
 	uint32_t max_rf_offset = ((uint64_t)f_baseband * (1UL << 24) + F_CLK/2)/F_CLK;
 	//uint32_t fskd = (uint32_t)(260 * m) & (~(uint32_t)1);
-	uint32_t fskd = ((uint32_t)3 * 512 * deviation)/bitrate;
+	uint32_t fskd = ((uint64_t)3 * 512 * deviation)/bitrate;
 
-	uint32_t bw = F_CLK / (32 * bitrate * XTALDIV * decimation);
+	uint32_t bw = F_CLK / ((uint32_t)32 * bitrate * XTALDIV * decimation);
 
 	afskshift = (uint8_t)(2*log2i(bw));
 
