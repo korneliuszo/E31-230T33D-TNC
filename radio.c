@@ -807,6 +807,10 @@ void radio_start(void)
 		radio_write_u8(0xF35, 0x10);
 	//radio_write_u8(AX_REG_PINFUNCSYSCLK,0x04);
 
+	radio_write_u8(AX_REG_PINFUNCPWRAMP,0x05);
+	radio_write_u8(AX_REG_DACCONFIG,(1<<6)| 0x08);
+	radio_write_u16(AX_REG_DACVALUE, 0x0C);
+
 	radio_set_freq(144800000);
 	radio_setup_modulation();
 	radio_rx_on();
