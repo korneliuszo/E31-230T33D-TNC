@@ -28,15 +28,15 @@ PRJ_OBJECTS      = $(addprefix $(OUTPUT_DIR)/, $(notdir $(PRJ_SOURCE:.c=.rel)))
 # concat all project files
 SRC_DIR          = $(PRJ_SRC_DIR)
 INC_DIR          = $(PRJ_INC_DIR)
-SOURCE           = $(PRJ_SOURCE)
+SOURCE           = $(PRJ_SOURCE) SDCC/config_values.c
 HEADER           = $(PRJ_HEADER)
-OBJECTS          = $(PRJ_OBJECTS)
+OBJECTS          = $(PRJ_OBJECTS) SDCC/config_values.rel
 
 # set compiler include paths
 INCLUDE          = $(foreach d, $(INC_DIR), $(addprefix -I, $(d)))
 
 # set make search paths
-vpath %.c $(SRC_DIR)
+vpath %.c $(SRC_DIR) $(OUTPUT_DIR)
 vpath %.h $(INC_DIR)
 
 # debug: print variable and stop
@@ -59,6 +59,9 @@ all: default
 $(OUTPUT_DIR):
 	mkdir -p $(OUTPUT_DIR)
 	rm -fr -- -p
+
+SDCC/config_values.c: axradiolabstate.xml generate_registers.py
+	./generate_registers.py
 
 # link target
 $(TARGET) : $(OBJECTS)

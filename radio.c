@@ -15,6 +15,7 @@
 #include "ax_reg.h"
 #include "ax_reg_values.h"
 #include "ax_fifo.h"
+#include "config_values.h"
 
 #include <stdint.h>
 
@@ -286,361 +287,33 @@ void radio_set_freq(uint32_t freq_hz)
 
 	radio_write_u8(AX_REG_PWRMODE, AX_PWRMODE_POWERDOWN | 0x60);
 
-	radio_write_u8(AX_REG_PLLLOOP,
+	/*radio_write_u8(AX_REG_PLLLOOP,
 			AX_PLLLOOP_FILTER_DIRECT |
 			AX_PLLLOOP_INTERNAL_FILTER_BW_500_KHZ);
 	radio_write_u8(AX_REG_PLLCPI,200);
 	radio_write_u8(AX_REG_PLLVCODIV,
-			AX_PLLVCODIV_DIVIDE_2 |
 			AX_PLLVCODIV_RF_DIVIDER_DIV_TWO |
 			AX_PLLVCODIV_RF_INTERNAL_VCO_EXTERNAL_INDUCTOR);
-	radio_write_u8(0xF34, 0x08);
+	radio_write_u8(0xF34, 0x08);*/
 
 }
 
-static uint8_t ax_value_to_mantissa_exp_4_4(uint32_t value)
-{
-	uint8_t exp = 0;
 
-	while (value > 15 && exp < 15) {
-		value >>= 1; exp++;
+void radio_setup_modulation(register_pair *regs)
+{
+	while(regs->reg != 0x000)
+	{
+		radio_write_u8(regs->reg, regs->val);
+		regs++;
 	}
-
-	return ((value & 0xF) << 4) | exp; /* mantissa, exponent */
 }
 
-static uint8_t ax_value_to_exp_mantissa_3_5(uint32_t value)
-{
-	uint8_t exp = 0;
-
-	while (value > 31 && exp < 7) {
-		value >>= 1; exp++;
-	}
-
-	return ((exp & 0x7) << 5) | value; /* exponent, mantissa */
-}
-
-inline uint8_t log2i(uint32_t x)
-{
-	uint8_t log2Val = 0 ;
-	// Count push off bits to right until 0
-	// 101 => 10 => 1 => 0
-	// which means hibit was 3rd bit, its value is 2^3
-	while( x>>=1 ) log2Val++;  // div by 2 until find log2.  log_2(63)=5.97, so
-	// take that as 5, (this is a traditional integer function!)
-	// eg x=63 (111111), log2Val=5 (last one isn't counted by the while loop)
-	return log2Val ;
-}
-
-#define M_LOG2E 1.44269504088896340736
-
-uint32_t decimation;
-uint8_t afskshift;
-
-void radio_setup_modulation(void)
-{
-	uint32_t deviation = 3000;
-	uint32_t bitrate = 1200;
-
-	float m = 2.0 * deviation/ bitrate;
-	//uint32_t rx_bandwith = deviation;
-	uint32_t f_baseband = 15000;//2*(deviation+2200);
-	uint32_t if_frequency = f_baseband / 2;
-	if(if_frequency < 3180)
-		if_frequency = 3180;
-	uint16_t iffreq =
-			((uint64_t)if_frequency
-					* (1UL << 20) * XTALDIV
-					+ F_CLK/2) /* roundup*/
-					/ F_CLK;
-	uint32_t decdiv = (16 * XTALDIV * 4 /* flt */ * f_baseband);
-	decimation = (F_CLK + decdiv/2)/decdiv;
-	if(decimation > 127)
-		decimation = 127;
-	uint32_t rx_datadiv = XTALDIV * bitrate * decimation;
-	uint32_t rx_data_rate = ((uint64_t)F_CLK * 128 + rx_datadiv/2) / rx_datadiv;
-	uint32_t max_rf_offset = ((uint64_t)f_baseband * (1UL << 24) + F_CLK/2)/F_CLK;
-	//uint32_t fskd = (uint32_t)(260 * m) & (~(uint32_t)1);
-	uint32_t fskd = ((uint64_t)3 * 512 * deviation)/bitrate;
-
-	uint32_t bw = F_CLK / ((uint32_t)32 * bitrate * XTALDIV * decimation);
-
-	afskshift = (uint8_t)(2*log2i(bw));
-
-	float ratio = (64.0 * PI * XTALDIV * bitrate/10) /
-			(float)F_CLK;
-
-	uint8_t agc_bw_product = (uint8_t)(-logf(1 - sqrtf(1 - ratio))* M_LOG2E);
-
-	uint8_t agc_attack_initial = agc_bw_product;
-	uint8_t agc_decay_initial = agc_bw_product + 7;
-	if(agc_attack_initial > 0x08) agc_attack_initial = 0x08;
-	if(agc_decay_initial > 0x0E) agc_decay_initial = 0x0E;
-	uint8_t agc_attack_after = agc_attack_initial;
-	uint8_t agc_decay_after = agc_decay_initial;
-	uint8_t agc_attack_during = 0x0F;
-	uint8_t agc_decay_during = 0x0F;
-
-	uint32_t  time_gain_initial = rx_data_rate / 4;
-	if(time_gain_initial >= rx_data_rate - (1UL<<12))
-		time_gain_initial = rx_data_rate - (1UL<<12);
-	uint32_t  time_gain_after = rx_data_rate / 16;
-	if(time_gain_after >= rx_data_rate - (1UL<<12))
-		time_gain_after = rx_data_rate - (1UL<<12);
-	uint32_t  time_gain_during = rx_data_rate / 32;
-	if(time_gain_during >= rx_data_rate - (1UL<<12))
-		time_gain_during = rx_data_rate - (1UL<<12);
-
-	uint32_t dr_gain_initial = rx_data_rate / 128;
-	uint32_t dr_gain_after = rx_data_rate / 256;
-	uint32_t dr_gain_during = rx_data_rate / 512;
-
-	uint8_t filter_idx = 0x3;
-	uint8_t phase_gain = 0x3;
-
-	uint8_t baseband_rg_phase_det = 0xF; /* disable loop */
-	uint8_t baseband_rg_freq_det = 0x1F; /* disable loop */
-
-	uint8_t rffreq_rg = logf((float)F_CLK / (XTALDIV * 4 * bitrate))
-																		*M_LOG2E + 0.5;
-	uint8_t rffreq_rg_during = rffreq_rg + 4;
-	if (rffreq_rg > 0xD) { rffreq_rg = 0xD; }
-	if (rffreq_rg_during > 0xD) { rffreq_rg_during = 0xD; }
-
-	uint8_t amplflags = AX_AMPLGAIN_AMPLITUDE_RECOVERY_PEAKDET;
-	uint8_t amplgain = 6;
-
-	uint16_t freq_dev_initial = 0;
-	uint16_t freq_dev = (uint16_t)((deviation * 128 * 0.8) + 0.5); /* k_sf = 0.8 */
-
-	uint8_t match1_threashold = 10;  /* maximum 15 */
-	uint8_t match0_threashold = 28;  /* maximum 31 */
-
-	uint8_t pkt_misc_flags = 0;
-
-	/* tx pll boost time */
-	uint16_t tx_pll_boost_time = 38;
-
-	/* tx pll settle time */
-	uint16_t tx_pll_settle_time = 20;
-
-	/* rx pll boost time */
-	uint16_t rx_pll_boost_time = 38;
-
-	/* rx pll settle time */
-	uint16_t rx_pll_settle_time = 20;
-
-	/* rx agc coarse  */
-	uint16_t rx_coarse_agc = 152;          /* 152 µs */
-
-	uint16_t rx_agc_settling = 0;
-
-	/* 3us rssi setting time */
-	pkt_misc_flags |= AX_PKT_FLAGS_RSSI_UNITS_MICROSECONDS;
-	uint16_t rx_rssi_settling = 3;
-
-	uint16_t preamble_2_timeout = 23;      /* 23 bits, for 16-bit preamble */
-
-	//all values calculated now setupping registers
-
-	radio_write_u8(AX_REG_MODULATION,AX_MODULATION_AFSK);
-	radio_write_u8(AX_REG_ENCODING,AX_ENC_NRZI);
-	radio_write_u8(AX_REG_FRAMING,AX_FRAMING_MODE_HDLC | AX_FRAMING_CRCMODE_CCITT);
-	radio_write_u8(0xF72, 0x00);
-	radio_write_u8(AX_REG_WAKEUPXOEARLY,1);
-
-	//RX
-	radio_write_u16(AX_REG_IFFREQ, iffreq);
-	radio_write_u8(AX_REG_DECIMATION,decimation);
-	radio_write_u24(AX_REG_RXDATARATE,rx_data_rate);
-	radio_write_u24(AX_REG_MAXDROFFSET,0);
-	radio_write_u24(AX_REG_MAXRFOFFSET, AX_MAXRFOFFSET_FREQOFFSCORR_FIRST_LO | max_rf_offset);
-	radio_write_u16(AX_REG_FSKDMAX, fskd & 0xFFFF);
-	radio_write_u16(AX_REG_FSKDMIN, ~fskd & 0xFFFF);
-	radio_write_u8(AX_REG_AMPLFILTER, 0);
-	radio_write_u8(AX_REG_DIVERSITY,0);
-
-	//patterns
-	radio_write_u8(AX_REG_RXPARAMSETS,0xF4);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_AGCGAIN,
-			((agc_decay_initial & 0xF) << 4) | (agc_attack_initial & 0xF));
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_AGCGAIN,
-			((agc_decay_after & 0xF) << 4) | (agc_attack_after & 0xF));
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_AGCGAIN,
-			((agc_decay_during & 0xF) << 4) | (agc_attack_during & 0xF));
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_AGCTARGET, 0x84);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_AGCTARGET, 0x84);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_AGCTARGET, 0x84);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_AGCAHYST, 0x0);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_AGCAHYST, 0x0);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_AGCAHYST, 0x0);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_AGCMINMAX, 0x0);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_AGCMINMAX, 0x0);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_AGCMINMAX, 0x0);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_TIMEGAIN,
-			ax_value_to_mantissa_exp_4_4(time_gain_initial));
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_TIMEGAIN,
-			ax_value_to_mantissa_exp_4_4(time_gain_after));
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_TIMEGAIN,
-			ax_value_to_mantissa_exp_4_4(time_gain_during));
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_DRGAIN,
-			ax_value_to_mantissa_exp_4_4(dr_gain_initial));
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_DRGAIN,
-			ax_value_to_mantissa_exp_4_4(dr_gain_after));
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_DRGAIN,
-			ax_value_to_mantissa_exp_4_4(dr_gain_during));
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_PHASEGAIN,
-			((filter_idx &0x3)<<6) | (phase_gain & 0xF));
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_PHASEGAIN,
-			((filter_idx &0x3)<<6) | (phase_gain & 0xF));
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_PHASEGAIN,
-			((filter_idx &0x3)<<6) | (phase_gain & 0xF));
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_FREQUENCYGAINA,
-			baseband_rg_phase_det);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_FREQUENCYGAINA,
-			baseband_rg_phase_det);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_FREQUENCYGAINA,
-			baseband_rg_phase_det);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_FREQUENCYGAINB,
-			baseband_rg_freq_det);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_FREQUENCYGAINB,
-			baseband_rg_freq_det);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_FREQUENCYGAINB,
-			baseband_rg_freq_det);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_FREQUENCYGAINC,
-			rffreq_rg);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_FREQUENCYGAINC,
-			rffreq_rg);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_FREQUENCYGAINC,
-			rffreq_rg_during);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_FREQUENCYGAIND,
-			rffreq_rg);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_FREQUENCYGAIND,
-			rffreq_rg);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_FREQUENCYGAIND,
-			rffreq_rg_during);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_AMPLITUDEGAIN,
-			amplflags | amplgain);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_AMPLITUDEGAIN,
-			amplflags | amplgain);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_AMPLITUDEGAIN,
-			amplflags | amplgain);
-
-	radio_write_u16(AX_REG_RX_PARAMETER0 + AX_RX_FREQDEV,
-			freq_dev_initial);
-	radio_write_u16(AX_REG_RX_PARAMETER1 + AX_RX_FREQDEV,
-			freq_dev);
-	radio_write_u16(AX_REG_RX_PARAMETER3 + AX_RX_FREQDEV,
-			freq_dev);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_FOURFSK, 0x16);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_FOURFSK, 0x16);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_FOURFSK, 0x16);
-
-	radio_write_u8(AX_REG_RX_PARAMETER0 + AX_RX_BBOFFSRES, 0x0);
-	radio_write_u8(AX_REG_RX_PARAMETER1 + AX_RX_BBOFFSRES, 0x0);
-	radio_write_u8(AX_REG_RX_PARAMETER3 + AX_RX_BBOFFSRES, 0x0);
-
-	//TX_params
-	radio_write_u8(AX_REG_MODCFGF, AX_MODCFGF_FREQSHAPE_UNSHAPED);
-	radio_write_u8(AX_REG_MODCFGA, AX_MODCFGA_AMPLSHAPE_RAISED_COSINE | AX_MODCFGA_TXDIFF);
-
-	uint32_t fskdev = ((float)deviation * (1UL << 24) * 0.858785) / F_CLK + 0.5;
-	radio_write_u24(AX_REG_FSKDEV, fskdev);
-	uint32_t txrate = ((float)bitrate * (1UL << 24))/ F_CLK + 0.5;
-	radio_write_u24(AX_REG_TXRATE, txrate);
-	radio_write_u16(AX_REG_TXPWRCOEFFB,0x01ff); // TODO: power setup
-
-	//PLL
-	radio_write_u8(AX_REG_PLLVCOI, AX_PLLVCOI_ENABLE_MANUAL | 25);
-	radio_write_u8(AX_REG_PLLRNGCLK, AX_PLLRNGCLK_DIV_2048);
-
-	//BASEBAND
-	radio_write_u8(AX_REG_BBTUNE, 0x0F);
-	radio_write_u8(AX_REG_BBOFFSCAP, 0x77);
-
-	//PACKET
-	radio_write_u8(AX_REG_PKTADDRCFG, 0x01);
-	radio_write_u8(AX_REG_PKTLENCFG, 0x80); // was 0x80
-	radio_write_u8(AX_REG_PKTLENOFFSET, 0x00);
-	radio_write_u8(AX_REG_PKTMAXLEN, 0xFF);
-
-	//MATCH
-	radio_write_u32(AX_REG_MATCH0PAT, 0x7E7E7E7E);
-	radio_write_u8(AX_REG_MATCH0LEN, 0x00);
-	radio_write_u8(AX_REG_MATCH0MAX,0x1F);
-
-	radio_write_u16(AX_REG_MATCH1PAT, 0x7E7E);
-	radio_write_u8(AX_REG_MATCH1LEN, 0x0A);
-	radio_write_u8(AX_REG_MATCH1MAX,10);
-
-	//PACKET_CTRL
-	radio_write_u8(AX_REG_TMGTXBOOST,
-			ax_value_to_exp_mantissa_3_5(tx_pll_boost_time));
-	radio_write_u8(AX_REG_TMGTXSETTLE,
-			ax_value_to_exp_mantissa_3_5(tx_pll_settle_time));
-	radio_write_u8(AX_REG_TMGRXBOOST,
-			ax_value_to_exp_mantissa_3_5(rx_pll_boost_time));
-	radio_write_u8(AX_REG_TMGRXSETTLE,
-			ax_value_to_exp_mantissa_3_5(rx_pll_settle_time));
-	radio_write_u8(AX_REG_TMGRXOFFSACQ, 0x00);
-	radio_write_u8(AX_REG_TMGRXCOARSEAGC,
-			ax_value_to_exp_mantissa_3_5(rx_coarse_agc));
-	radio_write_u8(AX_REG_TMGRXAGC,
-			ax_value_to_exp_mantissa_3_5(rx_agc_settling));
-	radio_write_u8(AX_REG_TMGRXRSSI,
-			ax_value_to_exp_mantissa_3_5(rx_rssi_settling));
-	radio_write_u8(AX_REG_TMGRXPREAMBLE2,
-			ax_value_to_exp_mantissa_3_5(preamble_2_timeout));
-	radio_write_u8(AX_REG_BGNDRSSITHR, 0x00);
-	radio_write_u8(AX_REG_PKTCHUNKSIZE, AX_PKT_MAXIMUM_CHUNK_SIZE_240_BYTES);
-	radio_write_u8(AX_REG_PKTMISCFLAGS, pkt_misc_flags);
-	radio_write_u8(AX_REG_PKTSTOREFLAGS, AX_PKT_STORE_CRC_BYTES);
-	radio_write_u8(AX_REG_PKTACCEPTFLAGS,
-			AX_PKT_ACCEPT_MULTIPLE_CHUNKS |  /* (LRGP) */
-			AX_PKT_ACCEPT_ADDRESS_FAILURES | /* (ADDRF) */
-			AX_PKT_ACCEPT_RESIDUE |          /* (RESIDUE) */
-			AX_PKT_ACCEPT_SIZE_FAILURES |
-			0);
-
-	//LPOSC
-	//DAC
-	//PERF TUNNING
-	radio_write_u8(AX_REG_REF, 0x03); /* 0xF0D */
-	radio_write_u8(0xF1C, 0x07); /* const */
-	radio_write_u8(0xF21, 0x5c); /* !! */
-	radio_write_u8(0xF22, 0x53); /* !! */
-	radio_write_u8(0xF23, 0x76); /* !! */
-	radio_write_u8(0xF26, 0x92); /* !! */
-	radio_write_u8(0xF44, 0x25); /* !! */
-
-	//SYNTH - done in tuning
-}
 void radio_tx_on(void)
 {
 	radio_write_u8(AX_REG_PWRMODE, AX_PWRMODE_STANDBY | 0x60);
 	radio_write_u8(AX_REG_PWRMODE, AX_PWRMODE_FIFOON | 0x60);
 
-	//AFSK
-	uint16_t afskmark = ((uint64_t)1200 * (1UL << 18) * 2 + F_CLK/2)/F_CLK;
-	uint16_t afskspace = ((uint64_t)2200 * (1UL << 18) * 2 + F_CLK/2)/F_CLK;
-	radio_write_u16(AX_REG_AFSKMARK, afskmark);
-	radio_write_u16(AX_REG_AFSKSPACE, afskspace);
-
-	radio_write_u8(0xF00, 0x0F); /* const */
-	radio_write_u8(0xF18, 0x06); /* ?? */
+	radio_setup_modulation(config_tx);
 
 	radio_write_u8(AX_REG_FIFOSTAT, AX_FIFOCMD_CLEAR_FIFO_DATA_AND_FLAGS);
 
@@ -655,16 +328,7 @@ void radio_rx_on(void)
 {
 	radio_write_u8(AX_REG_PWRMODE, AX_PWRMODE_FULLRX | 0x60);
 
-	//AFSK
-	uint16_t afskmark = ((uint64_t)1200 * (1UL << 16) * decimation * XTALDIV + F_CLK/2)/F_CLK;
-	uint16_t afskspace = ((uint64_t)2200 * (1UL << 16) * decimation * XTALDIV + F_CLK/2)/F_CLK;
-	radio_write_u16(AX_REG_AFSKMARK, afskmark);
-	radio_write_u16(AX_REG_AFSKSPACE, afskspace);
-
-	radio_write_u16(AX_REG_AFSKCTRL,afskshift);
-
-	radio_write_u8(0xF00, 0x0F); /* const */
-	radio_write_u8(0xF18, 0x02); /* ?? */
+	radio_setup_modulation(config_rx);
 
 	radio_write_u8(AX_REG_FIFOSTAT, AX_FIFOCMD_CLEAR_FIFO_DATA_AND_FLAGS);
 }
@@ -812,6 +476,6 @@ void radio_start(void)
 	radio_write_u16(AX_REG_DACVALUE, 0x0C);
 
 	radio_set_freq(144800000);
-	radio_setup_modulation();
+	radio_setup_modulation(config_common);
 	radio_rx_on();
 }
